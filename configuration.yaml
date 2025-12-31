@@ -1,0 +1,283 @@
+
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+modbus: !include modbus.yaml
+
+homeassistant:
+  customize:
+    climate.air_conditioner_5f9db2_air_conditioner:
+      min_temp: 16
+      max_temp: 30
+  packages: !include_dir_named integrations
+  
+homematic:
+  interfaces:
+    rf:
+      host: 192.168.2.55
+      resolvenames: "json"
+      username: "Admin"
+ #     password: "secret"
+    wired:
+      host: 192.168.2.55
+      port: 2000
+      resolvenames: "json"
+      username: "Admin"
+ #     password: "secret"
+    ip:
+      host: 192.168.2.55
+      port: 2010
+    groups:
+      host: 192.168.2.55
+      port: 9292
+      resolvenames: "json"
+      username: "Admin"
+ #     password: "secret"
+      path: /groups
+  hosts:
+    ccu2:
+      host: 192.168.2.55
+      port: 2001
+      username: "Admin"
+ #     password: "secret"
+ 
+
+
+sensor:
+  - platform: template
+    sensors:
+      pv_power_total:
+        friendly_name: "PV Gesamtleistung"
+        unique_id: pv_power_total_sensor
+        unit_of_measurement: "W"
+        value_template: >-
+          {{ (states('sensor.e3_vitocharge_03_pv_leistung') | float * 1000) + (states('sensor.sb2_0_1vl_40_602_grid_power') | int) }}
+  - platform: average
+    name: 'Average PV Production'
+    unique_id: pv_power_avg_5_sensor
+    duration: 00:05:00
+    entities:
+      - sensor.pv_power_total
+  - platform: average
+    name: 'Average Battery Charge'
+    unique_id: battery_power_avg_5_sensor
+    duration: 00:05:00
+    entities:
+      - sensor.e3_vitocharge_03_batterieleistung
+  - platform: average
+    name: 'Average Netzbezug'
+    unique_id: grid_power_avg_5_sensor
+    duration: 00:05:00
+    entities:
+      - sensor.e3_vitocharge_03_stromaustausch_mit_dem_netz
+  - platform: average
+    name: 'Average Ladestrom'
+    unique_id: pv_ladestrom
+    duration: 00:05:00
+    entities:
+      - sensor.webasto_unite_active_power_total
+
+  - platform: integration
+    source: sensor.batterieladung_positiv
+    name: "Batterie geladen Energie"
+    unit_prefix: k
+    round: 2
+    method: trapezoidal
+
+
+
+template:
+  - binary_sensor:
+      - unique_id: strom_unter_28_cent
+        name: "Strom unter 28 Cent"
+        state: "{{ (states('sensor.epex_spot_data_net_price') | float(0)) < 0.28 }}"
+        icon: >
+          {% if (states('sensor.epex_spot_data_net_price', 'price_per_kwh') | float(0)) < 0.28 %}
+            mdi:check-circle
+          {% else %}
+            mdi:close-circle
+          {% endif %}
+  - sensor:
+      - name: "PV Gesamtleistung_avg"
+        unique_id: pv_power_avg_sensor
+        unit_of_measurement: "W"
+        state: "{{ states('sensor.average_pv_production') | int(0) }}"
+      - name: "Ladestrom_Auto_avg"
+        unique_id: ladestrom_avg_sensor
+        unit_of_measurement: "W"
+        state: "{{ states('sensor.average_ladestrom') | int(0) }}"
+      - name: "Netz Austausch_avg"
+        unique_id: grid_power_avg_sensor
+        unit_of_measurement: "W"
+        state: "{{ states('sensor.average_netzbezug') | int(0) }}"
+
+      - name: "Batteriefluss_avg"
+        unique_id: battery_power_avg_sensor
+        unit_of_measurement: "W"
+        state: "{{ states('sensor.average_battery_charge') | int(0) }}"
+
+      - name: "Speicher Ladezustand"
+        unique_id: battery_soc_sensor
+        unit_of_measurement: "%"
+        state: "{{ states('sensor.e3_vitocharge_03_batterie') | int(0) }}"
+
+      - name: "Verfügbares Ladepotenzial"
+        unique_id: available_power_sensor
+        unit_of_measurement: "W"
+        state: >-
+          {% set battery_flow = states('sensor.average_battery_charge') | int(0) %}
+          {% set grid = states('sensor.average_netzbezug') | int(0) %}
+          {% set battery_soc = states('sensor.e3_vitocharge_03_batterie') | int(0) %}
+          {% set current_charging_power = states('sensor.average_ladestrom') | int(0) %}
+        
+          {# Wenn Speicher <90%: Nutze nur das, was nicht für den Speicher benötigt wird #}
+          {% if battery_soc < 90 %}
+            {# Verwende nur Strom, der nicht zum Laden des Speichers gebraucht wird #}
+            {% set surplus = (-battery_flow) - grid + current_charging_power %}
+          {% else %}
+            {# Speicher voll → erlaube bis zu 2000 W zusätzlich aus dem Speicher #}
+            {% set surplus = 2000 + (-battery_flow) - grid + current_charging_power %}
+          {% endif %}
+        
+          {{ surplus if surplus > 0 else 0 }}
+
+      - name: "Wallbox Soll-Strom"
+        unique_id: wallbox_current_sensor
+        unit_of_measurement: "A"
+        state: >-
+          {% set power = states('sensor.verfugbares_ladepotenzial') | int(0) %}
+          {% set current = (power / 690) | int %}
+          {% set final_current = 5 if power < 3200 else 6 if current < 6 else 16 if current > 16 else current %}
+          {{ final_current }}
+          
+      - name: "Batterieladung positiv"
+        unit_of_measurement: "W"
+        state: >
+          {% if states('sensor.e3_vitocharge_03_batterieleistung')|float < 0 %}
+            {{ states('sensor.e3_vitocharge_03_batterieleistung')|float * -1 }}
+          {% else %}
+            0
+          {% endif %}          
+
+      - name: "Summe Solar Forecast Heute"
+        unit_of_measurement: "kWh"
+        state: >
+          {{ states('sensor.energy_production_today')|float(0) + states('sensor.energy_production_today_2')|float(0) }}
+
+      - name: "PV Produktion gesamt heute"
+        unit_of_measurement: "kWh"
+        state: >
+          {{ (states('sensor.sb2_0_1vl_40_602_daily_yield')|float(0) / 1000)
+             + states('sensor.e3_vitocharge_03_pv_erzeugung_heute')|float(0) }}
+          
+      - name: "PV Forecast Abweichung"
+        unit_of_measurement: "kWh"
+        state: >
+          {{ states('sensor.solcast_pv_forecast_prognose_heute')|float(0)|round(1)
+             - states('sensor.pv_produktion_gesamt_heute')|float(0) |round(1)}}
+          
+      - name: "PV Forecast Erfüllung"
+        unique_id: pv_forecast_erfuellung
+        unit_of_measurement: "%"
+        state: >
+          {% set forecast = states('sensor.solcast_pv_forecast_prognose_heute')|float(0) %}
+          {% set ist = states('sensor.pv_produktion_gesamt_heute')|float(0) %}
+          {{ ((ist / forecast * 100) if forecast > 0 else 0) | round(0) }}
+
+      - name: "Webasto Unite Ladepunkt Status"
+        unique_id: "webasto_unite_status_text"
+        state: >
+          {% set codes = {
+            0: "Available",
+            1: "Preparing",
+            2: "Charging",
+            3: "SuspendedEVSE",
+            4: "SuspendedEV",
+            5: "Finishing",
+            6: "Reserved",
+            7: "Unavailable",
+            8: "Faulted"
+          } %}
+          {{ codes.get(states('sensor.webasto_unite_charge_point_state')|int, 'Unbekannt') }}
+
+      - name: "Webasto Unite Kabel Status"
+        unique_id: "webasto_unite_kabel_status_text"
+        state: >
+          {% set codes = {
+            0: "Cable not connected",
+            1: "Cable connected, vehicle not connected",
+            2: "Cable connected, vehicle connected",
+            3: "Cable connected, vehicle connected, cable locked"
+          } %}
+          {{ codes.get(states('sensor.webasto_unite_cable_state')|int, 'Unbekannt') }}
+
+
+          
+  - sensor:
+      - name: "Leasing Kilometerstatus"
+        unit_of_measurement: "km"
+        state: >
+          {% set start_date = '2024-09-20' %}
+          {% set allowed_total = 20000 %}
+          {% set initial_km = 18 %}
+          {% set current_km = states('sensor.niro_odometer') | float - initial_km %}
+          {% set days_passed = (as_timestamp(now()) - as_timestamp(strptime(start_date, '%Y-%m-%d'))) / 86400 %}
+          {% set end_date = '2026-09-20' %}
+          {% set total_days = (as_timestamp(strptime(end_date, '%Y-%m-%d')) - as_timestamp(strptime(start_date, '%Y-%m-%d'))) / 86400 %}
+          {% set allowed_km = (allowed_total / total_days) * days_passed %}
+          {{ (current_km - allowed_km) | round(1) }}
+
+      - name: "Leasing Prognose Endstand"
+        unit_of_measurement: "km"
+        state: >
+          {% set start_date = '2024-09-20' %}
+          {% set end_date = '2026-09-20' %}
+          {% set initial_km = 18 %}
+          {% set current_km = states('sensor.niro_odometer') | float - initial_km %}
+          {% set days_passed = (as_timestamp(now()) - as_timestamp(strptime(start_date, '%Y-%m-%d'))) / 86400 %}
+          {% set total_days = (as_timestamp(strptime(end_date, '%Y-%m-%d')) - as_timestamp(strptime(start_date, '%Y-%m-%d'))) / 86400 %}
+          {% if days_passed > 0 %}
+            {{ (current_km / days_passed * total_days) | round(0) }}
+          {% else %}
+            0
+          {% endif %}
+
+      - name: "Leasing Prognose Differenz"
+        unit_of_measurement: "km"
+        state: >
+          {% set allowed_total = 20000 %}
+          {% set prognose = states('sensor.leasing_prognose_endstand') | float %}
+          {{ (prognose - allowed_total) | round(0) }}
+
+      - name: "Leasing Tages-Soll"
+        unit_of_measurement: "km"
+        state: >
+          {% set start_date = '2024-09-20' %}
+          {% set allowed_total = 20000 %}
+          {% set end_date = '2026-09-20' %}
+          {% set total_days = (as_timestamp(strptime(end_date, '%Y-%m-%d')) - as_timestamp(strptime(start_date, '%Y-%m-%d'))) / 86400 %}
+          {% set days_passed = (as_timestamp(now()) - as_timestamp(strptime(start_date, '%Y-%m-%d'))) / 86400 %}
+          {{ ((allowed_total / total_days) * days_passed) | round(1) }}
+
+
+      - name: hausstromverbrauch
+        unique_id: hausstromverbrauch_sensor
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+        availability: >-
+          {{ states('sensor.pv_power_total') not in ['unknown', 'unavailable'] }}
+        state: >-
+          {{ 
+            states('sensor.pv_power_total')|float(0) 
+            + states('sensor.e3_vitocharge_03_batterieleistung')|float(0) 
+            + states('sensor.e3_vitocharge_03_stromaustausch_mit_dem_netz')|float(0) 
+          }}
+

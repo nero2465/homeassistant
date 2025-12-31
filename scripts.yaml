@@ -1,0 +1,48 @@
+e_auto_ladung_bis_sonnenuntergang:
+  alias: E-Auto-Ladung bis Sonnenuntergang
+  sequence:
+  - condition: template
+    value_template: '{{ states(''sensor.niro_ev_battery_level'') | float < 100 }}'
+  - variables:
+      current_soc: '{{ states(''sensor.niro_ev_battery_level'') | float }}'
+      required_kwh: '{{ (64 * (100 - current_soc) / 100) | round(2) }}'
+  - variables:
+      sunset_time: '{{ as_timestamp(state_attr(''sun.sun'', ''next_setting'')) - 7200
+        }}'
+      remaining_seconds: '{{ sunset_time - as_timestamp(now()) }}'
+      remaining_hours: '{{ (remaining_seconds / 3600) | round(2) }}'
+  - variables:
+      required_power_w: '{{ (required_kwh / remaining_hours * 1000) | round(2) }}'
+      charging_amps: "{% set power_needed = (required_kwh / remaining_hours * 1000)
+        %} {% set amps_3phase = (power_needed / (230 * 3)) | float %} {% set amps_2phase
+        = (power_needed / (230 * 2)) | float %} {% if amps_3phase > 16 %}\n  16\n{%
+        elif amps_3phase >= 8 %}\n  {{ (amps_3phase + 0.999) | int }}\n{% elif amps_2phase
+        >= 6 %}\n  {{ [7, (amps_2phase + 0.999) | int] | min }}\n{% else %}\n  6\n{%
+        endif %}\n"
+  - target:
+      entity_id: automation.wallbox_mit_pv_uberschuss_laden_alle_5_min
+    action: automation.turn_off
+    data:
+      stop_actions: true
+  - data:
+      hub: Webasto_Unite
+      address: 5004
+      slave: 255
+      value: '{{ charging_amps }}'
+    action: modbus.write_register
+  - action: input_number.set_value
+    metadata: {}
+    data:
+      value: '{{ charging_amps }}'
+    target:
+      entity_id: input_number.webasto_unite_current_value_slider
+  - delay:
+      hours: '{{ remaining_hours|int }}'
+      minutes: '{{ (remaining_hours % 1 * 60)|int }}'
+      seconds: '{{ (remaining_hours % 1 * 60 % 1 * 60)|int }}'
+  - target:
+      entity_id: automation.wallbox_mit_pv_uberschuss_laden_alle_5_min
+    action: automation.turn_on
+    data: {}
+  mode: single
+  description: ''

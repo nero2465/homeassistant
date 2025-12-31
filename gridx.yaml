@@ -1,0 +1,16 @@
+sensor:
+  - platform: rest
+    name: gridX Live Data
+    resource: https://api.gridx.de/systems/0317e753-27bf-4853-b760-3576dfcf8abd/live
+    headers:
+      Authorization: "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6Ik16UkRSakU1UVRrd1JEQXhOVU15UlRnMVFrRTNNemRCUmpZNE5rRTFOamRCTjBZd1FrWkdOQSJ9.eyJlbWFpbCI6ImNockBjaHJjaHIuZGUiLCJlbWFpbF92ZXJpZmllZCI6ZmFsc2UsImlzcyI6ImhtdHRwczovL2dyaWR4LmV1LmF1dGgwLmNvbS8iLCJhdWQiOiJtRzBQaG13N0Rtdm5BcU83cDZCMEtPWUJPRHBwWTNjYyIsInN1YiI6ImF1dGgwfDY5MjVhYzA4ZjFhNWZlMzU4YjZhN2UzZCIsImlhdCI6MTc2NzEyNDE4Niwic3ViIjoiYXV0aDB8NjkyNWFjMDhmMWE1ZmUzNThiNmE3ZTNkIiwiaWF0IjoxNzY3MTI0MTg2LCJleHAiOjE3NjcxNjAxODZ9.HjUU1BSCwC7Qdj4h84uRC4zjCWuYpISoegOnQUqdSOaHoQvT1ZQtugAAQT_vj4vP7y16gX6lrCxeJ0axEZonpKYRJ8vc75SOMva5dYofZ1M30KeSrJTkshGshqz4wg6PpNV-6f1FC5EUpUGCJH4r8EZEUoWx6QCoOxlrewa8yueSVaIknH-O2Bd5YuRqi9cQmZSDCAA7xXoHNu9g0vGHA4r8spmkTWcJVsZ1pFxpk1URHpOY2eWcDjWTdKH158lavuvU9fMdMPaLmlulYRZQFpdcz2IVgPa_ipbPTuFkZSHAq4qnCWp0MTEIVveSda7OXlwBv46rD48jDDKIghlnbw"
+      Accept: application/vnd.gridx.v2+json
+    json_attributes:
+      enabled: true
+    json_attributes_path: "$.*"
+    value_template: "{{ value_json.photovoltaic | float(0) }}"
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    scan_interval: 30
+    timeout: 10
