@@ -1,0 +1,142 @@
+# =============================================================================
+# gridX Integration für Home Assistant
+# =============================================================================
+# Datei: /home/user/homeassistant/integrations/gridx.yaml
+# Wird automatisch geladen durch: packages: !include_dir_named integrations
+#
+# Erstellt: 31.12.2025
+# API: https://api.gridx.de/systems/{system_id}/live
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# REST Integration - Holt alle Daten in einem Aufruf
+# -----------------------------------------------------------------------------
+rest:
+  - resource: https://api.gridx.de/systems/0317e753-27bf-4853-b760-3576dfcf8abd/live
+    scan_interval: 30
+    timeout: 10
+    headers:
+      Authorization: !secret gridx_token
+      Accept: "application/vnd.gridx.v2+json"
+
+    sensor:
+      # Haupt-Sensor: Speichert alle JSON-Daten als Attribute
+      - name: "gridX Raw Data"
+        unique_id: gridx_raw_data
+        value_template: "{{ now().isoformat() }}"
+        json_attributes:
+          - photovoltaic
+          - grid
+          - consumption
+          - batteries
+          - directConsumption
+          - directConsumptionEV
+          - directConsumptionHeatPump
+          - directConsumptionHeater
+          - selfConsumption
+          - selfSufficiency
+          - selfConsumptionRate
+          - totalConsumption
+
+      # PV-Leistung direkt aus der API
+      - name: "gridX PV Leistung"
+        unique_id: gridx_pv_power
+        value_template: "{{ value_json.photovoltaic | float(0) }}"
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+
+      # Netzleistung direkt aus der API (negativ = Einspeisung)
+      - name: "gridX Netz"
+        unique_id: gridx_grid_power
+        value_template: "{{ value_json.grid | float(0) }}"
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+
+      # Verbrauch direkt aus der API
+      - name: "gridX Verbrauch"
+        unique_id: gridx_consumption
+        value_template: "{{ value_json.consumption | float(0) }}"
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+
+# -----------------------------------------------------------------------------
+# Template Sensoren - Extrahieren komplexe/verschachtelte Daten
+# -----------------------------------------------------------------------------
+template:
+  - sensor:
+      # Batterie SOC (aus verschachteltem Array)
+      - name: "gridX Batterie SOC"
+        unique_id: gridx_battery_soc
+        unit_of_measurement: "%"
+        device_class: battery
+        state_class: measurement
+        availability: >-
+          {{ state_attr('sensor.gridx_raw_data', 'batteries') is not none
+             and state_attr('sensor.gridx_raw_data', 'batteries') | length > 0 }}
+        state: >-
+          {% set batteries = state_attr('sensor.gridx_raw_data', 'batteries') %}
+          {% if batteries and batteries | length > 0 %}
+            {{ (batteries[0].stateOfCharge | float(0) * 100) | round(0) }}
+          {% else %}
+            0
+          {% endif %}
+
+      # Batterie Leistung (aus verschachteltem Array)
+      - name: "gridX Batterie Leistung"
+        unique_id: gridx_battery_power
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+        availability: >-
+          {{ state_attr('sensor.gridx_raw_data', 'batteries') is not none
+             and state_attr('sensor.gridx_raw_data', 'batteries') | length > 0 }}
+        state: >-
+          {% set batteries = state_attr('sensor.gridx_raw_data', 'batteries') %}
+          {% if batteries and batteries | length > 0 %}
+            {{ batteries[0].power | float(0) | round(0) }}
+          {% else %}
+            0
+          {% endif %}
+
+      # PV in kW (für Dashboard)
+      - name: "gridX PV kW"
+        unique_id: gridx_pv_kw
+        unit_of_measurement: "kW"
+        device_class: power
+        state_class: measurement
+        state: >-
+          {{ (states('sensor.gridx_pv_leistung') | float(0) / 1000) | round(2) }}
+
+      # Netz in kW (für Dashboard)
+      - name: "gridX Netz kW"
+        unique_id: gridx_grid_kw
+        unit_of_measurement: "kW"
+        device_class: power
+        state_class: measurement
+        state: >-
+          {{ (states('sensor.gridx_netz') | float(0) / 1000) | round(2) }}
+
+      # Eigenverbrauch Anteil
+      - name: "gridX Eigenverbrauch"
+        unique_id: gridx_self_consumption
+        unit_of_measurement: "%"
+        state_class: measurement
+        availability: >-
+          {{ state_attr('sensor.gridx_raw_data', 'selfConsumptionRate') is not none }}
+        state: >-
+          {% set rate = state_attr('sensor.gridx_raw_data', 'selfConsumptionRate') %}
+          {{ (rate | float(0) * 100) | round(1) if rate else 0 }}
+
+      # Autarkie
+      - name: "gridX Autarkie"
+        unique_id: gridx_self_sufficiency
+        unit_of_measurement: "%"
+        state_class: measurement
+        availability: >-
+          {{ state_attr('sensor.gridx_raw_data', 'selfSufficiency') is not none }}
+        state: >-
+          {% set rate = state_attr('sensor.gridx_raw_data', 'selfSufficiency') %}
+          {{ (rate | float(0) * 100) | round(1) if rate else 0 }}
